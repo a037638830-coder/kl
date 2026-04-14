@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>韓文全能學習工具 (語速調節版)</title>
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+    <style>
+        :root {
+            --primary: #5d5cde;
+            --bg: #f0f2f5;
+            --white: #ffffff;
+            --success: #28a745;
+            --error: #dc3545;
+            --orange: #fd7e14;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Microsoft JhengHei", sans-serif;
+            background-color: var(--bg);
+            color: #333;
+            margin: 0;
+            padding: 10px;
+            touch-action: manipulation;
+        }
+
+        h1 { font-size: 1.4rem; color: var(--primary); text-align: center; margin: 10px 0; }
+
+        .section {
+            background: var(--white);
+            padding: 15px;
+            border-radius: 15px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            margin-bottom: 15px;
+        }
+
+        /* 導覽 */
+        .game-nav { display: flex; justify-content: center; gap: 8px; margin-bottom: 15px; flex-wrap: wrap; }
+        .btn { 
+            border: none; padding: 10px 14px; border-radius: 8px; cursor: pointer; 
+            font-size: 0.9rem; color: white; background: var(--primary);
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .btn-orange { background: var(--orange); }
+        .btn-green { background: var(--success); }
+        .btn-red { background: var(--error); }
+        .btn-small { padding: 5px 10px; font-size: 0.8rem; }
+
+        /* 語速控制列 */
+        .speed-control { 
+            margin: 10px 0; font-size: 0.9rem; background: #eee; padding: 8px; border-radius: 8px;
+            display: flex; align-items: center; justify-content: center; gap: 10px;
+        }
+        select { padding: 5px; border-radius: 4px; border: 1px solid #ccc; }
+
+        /* 畫板區 */
+        .canvas-area { 
+            position: relative; width: 300px; height: 220px; margin: 10px auto; 
+            border: 2px solid var(--primary); background: #fff; border-radius: 10px;
+            touch-action: none;
+        }
+        #hwCanvas { position: absolute; top:0; left:0; z-index: 10; width: 100%; height: 100%; }
+        #ans-overlay { 
+            position: absolute; top:0; left:0; width: 100%; height: 100%; 
+            display: flex; align-items: center; justify-content: center; 
+            font-size: 4rem; color: rgba(200,200,200,0.2); z-index: 5; font-weight: bold; pointer-events: none;
+        }
+
+        /* 單字庫 */
+        #dict-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(85px, 1fr)); gap: 8px; }
+        .dict-item { border: 1px solid #eee; padding: 8px 4px; border-radius: 8px; text-align: center; background: #fafafa; }
+
+        .scoreboard { display: flex; justify-content: center; gap: 20px; margin-bottom: 10px; font-weight: bold; }
+        .hidden { display: none; }
+        
+        @keyframes successPop {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.03); border-color: var(--success); }
+            100% { transform: scale(1); }
+        }
+        .success-anim { animation: successPop 0.5s ease; border-width: 4px; }
+    </style>
+</head>
+<body>
+
+    <h1>🇰🇷 韓文全能學習工具</h1>
+
+    <div class="speed-control">
+        <span>播放語速：</span>
+        <select id="speed-select">
+            <option value="0.5">0.5x (慢)</option>
+            <option value="0.75">0.75x</option>
+            <option value="1.0" selected>1.0x (正常)</option>
+            <option value="1.25">1.25x</option>
+            <option value="1.5">1.5x (快)</option>
+        </select>
+    </div>
+
+    <div class="game-nav">
+        <button class="btn" onclick="showGame('dict')">單字庫</button>
+        <button class="btn" onclick="showGame('writing')">手寫練習</button>
+        <button class="btn" onclick="showGame('listening')">聽力測驗</button>
+    </div>
+
+    <div id="game-dict" class="section game-box">
+        <div id="dict-list"></div>
+    </div>
+
+    <div id="game-writing" class="section game-box hidden">
+        <div class="scoreboard">
+            <div style="color:var(--success)">⭕ <span id="w-right">0</span></div>
+            <div style="color:var(--error)">❌ <span id="w-wrong">0</span></div>
+        </div>
+        
+        <div id="w-question" style="font-size: 2.2rem; font-weight: bold; color: var(--primary);"></div>
+        
+        <div style="display: flex; justify-content: center; gap: 10px; margin: 10px 0;">
+            <button class="btn btn-orange" onclick="playVoice(currentQ.kr, 'ko-KR')">🔊 聽韓文</button>
+            <button class="btn btn-orange" onclick="playVoice(currentQ.cn, 'zh-TW')">🔊 聽中文</button>
+        </div>
+        
+        <div class="canvas-area" id="canvas-frame">
+            <div id="ans-overlay"></div>
+            <canvas id="hwCanvas" width="300" height="220"></canvas>
+        </div>
+
+        <div id="w-status" style="height:25px; font-weight:bold; margin:5px 0; font-size:0.9rem;"></div>
+
+        <div style="display: flex; justify-content: center; gap: 8px;">
+            <button class="btn" onclick="clearCanvas()" style="background:#888;">清除</button>
+            <button class="btn btn-orange" onclick="runOCR()">🤖 AI 辨識</button>
+        </div>
+        
+        <div id="manual-eval" class="hidden" style="margin-top:15px; padding-top:10px; border-top: 1px solid #eee;">
+            <div style="display: flex; justify-content: center; gap: 10px;">
+                <button class="btn btn-green" onclick="recordScore(true)">我寫對了</button>
+                <button class="btn btn-red" onclick="recordScore(false)">我寫錯了</button>
+            </div>
+        </div>
+        
+        <button class="btn" onclick="nextW()" style="width:100%; margin-top:20px; background:#444;">下一題</button>
+    </div>
+
+    <div id="game-listening" class="section game-box hidden">
+        <button class="btn btn-orange" style="width:80%; padding:20px; font-size:1.2rem; margin-bottom:20px;" onclick="playVoice(currentQ.kr, 'ko-KR')">🔊 聽韓文</button>
+        <div id="listen-options" style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;"></div>
+        <div id="listen-feedback" style="margin-top:20px; font-weight:bold; height:20px;"></div>
+    </div>
+
+    <script>
+        const wordBank = [
+            {kr:'아이', cn:'小孩'}, {kr:'오이', cn:'小黃瓜'}, {kr:'우리', cn:'我們'}, {kr:'어머니', cn:'媽媽'}, {kr:'가수', cn:'歌手'}, {kr:'거미', cn:'蜘蛛'}, {kr:'구두', cn:'皮鞋'}, {kr:'다리미', cn:'熨斗'}, {kr:'나라', cn:'國家'}, {kr:'누구', cn:'誰'}, {kr:'다리', cn:'腿'}, {kr:'라디오', cn:'收音機'},
+            {kr:'모자', cn:'帽子'}, {kr:'머리', cn:'頭'}, {kr:'비누', cn:'肥皂'}, {kr:'父親', cn:'爸爸'}, {kr:'버스', cn:'巴士'}, {kr:'사자', cn:'獅子'}, {kr:'지도', cn:'地圖'}, {kr:'소나무', cn:'松樹'}, {kr:'자주', cn:'常常'}, {kr:'허리', cn:'腰'}, {kr:'호수', cn:'湖泊'}, {kr:'바구니', cn:'籃子'},
+            {kr:'야구', cn:'棒球'}, {kr:'교수', cn:'教授'}, {kr:'요가', cn:'瑜伽'}, {kr:'이야기', cn:'故事'}, {kr:'우유', cn:'牛奶'}, {kr:'여자', cn:'女子'}, {kr:'유리', cn:'玻璃'}, {kr:'토마토', cn:'番茄'}, {kr:'고추', cn:'辣椒'}, {kr:'치마', cn:'裙子'}, {kr:'코트', cn:'大衣'}, {kr:'기차표', cn:'火車票'},
+            {kr:'커피', cn:'咖啡'}, {kr:'우표', cn:'郵票'}, {kr:'포도', cn:'葡萄'}, {kr:'코끼리', cn:'大象'}, {kr:'꼬리', cn:'尾巴'}, {kr:'아빠', cn:'爸爸'}, {kr:'쓰다', cn:'寫/苦'}, {kr:'머리띠', cn:'髮箍'}, {kr:'짜다', cn:'鹹'}, {kr:'가짜', cn:'假'}, {kr:'뜨다', cn:'浮/睜眼'}, {kr:'아저씨', cn:'大叔'},
+            {kr:'개미', cn:'螞蟻'}, {kr:'모래', cn:'沙子'}, {kr:'얘기', cn:'聊天'}, {kr:'카메라', cn:'相機'}, {kr:'세수', cn:'洗臉'}, {kr:'그네', cn:'鞦韆'}, {kr:'서예', cn:'書法'}, {kr:'예쁘다', cn:'漂亮'}, {kr:'사과', cn:'蘋果'}, {kr:'화가', cn:'畫家'}, {kr:'돼지', cn:'豬'}, {kr:'쇠고기', cn:'牛肉'},
+            {kr:'두뇌', cn:'大腦'}, {kr:'회사', cn:'公司'}, {kr:'줘요', cn:'給'}, {kr:'추워요', cn:'冷'}, {kr:'쉬다', cn:'休息'}, {kr:'가위', cn:'剪刀'}, {kr:'의자', cn:'椅子'}, {kr:'스웨터', cn:'毛衣'}, {kr:'수박', cn:'西瓜'}, {kr:'부엌', cn:'廚房'}, {kr:'신문', cn:'報紙'}, {kr:'돈', cn:'錢'}, {kr:'레몬', cn:'檸檬'},
+            {kr:'버섯', cn:'香菇'}, {kr:'옷', cn:'衣服'}, {kr:'낮', cn:'白天'}, {kr:'꽃', cn:'花'}, {kr:'밑', cn:'下面'}, {kr:'물', cn:'水'}, {kr:'딸기', cn:'草莓'}, {kr:'연필', cn:'鉛筆'}, {kr:'남자', cn:'男人'}, {kr:'컴퓨터', cn:'電腦'}, {kr:'밥', cn:'飯'}, {kr:'입', cn:'嘴'}, {kr:'무릎', cn:'膝蓋'}, {kr:'가방', cn:'包包'}, {kr:'냉장고', cn:'冰箱'}
+        ];
+
+        let currentQ = {};
+        let scores = { r:0, w:0 };
+        const canvas = document.getElementById('hwCanvas');
+        const ctx = canvas.getContext('2d');
+        let drawing = false;
+
+        // 畫板設定
+        ctx.lineWidth = 6; ctx.lineCap = 'round'; ctx.strokeStyle = '#333';
+        const getXY = (e) => {
+            const r = canvas.getBoundingClientRect();
+            const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+            const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+            return [clientX - r.left, clientY - r.top];
+        };
+        const start = (e) => { drawing=true; ctx.beginPath(); ctx.moveTo(...getXY(e)); };
+        const move = (e) => { if(drawing){ ctx.lineTo(...getXY(e)); ctx.stroke(); } };
+        const stop = () => drawing=false;
+
+        canvas.addEventListener('mousedown', start); canvas.addEventListener('mousemove', move); window.addEventListener('mouseup', stop);
+        canvas.addEventListener('touchstart', (e) => { e.preventDefault(); start(e); });
+        canvas.addEventListener('touchmove', (e) => { e.preventDefault(); move(e); });
+
+        function clearCanvas() { 
+            ctx.clearRect(0,0,300,220); 
+            document.getElementById('ans-overlay').innerText = "";
+            document.getElementById('w-status').innerText = "";
+            document.getElementById('canvas-frame').classList.remove('success-anim');
+        }
+
+        function showGame(id) {
+            document.querySelectorAll('.game-box').forEach(b => b.classList.add('hidden'));
+            document.getElementById('game-'+id).classList.remove('hidden');
+            if(id === 'writing') nextW();
+            if(id === 'listening') nextL();
+        }
+
+        // 語音播放 (含語速調節)
+        function playVoice(txt, lang) {
+            const u = new SpeechSynthesisUtterance(txt);
+            u.lang = lang;
+            u.rate = parseFloat(document.getElementById('speed-select').value);
+            window.speechSynthesis.speak(u);
+        }
+
+        // 手寫練習邏輯
+        function nextW() {
+            currentQ = wordBank[Math.floor(Math.random()*wordBank.length)];
+            document.getElementById('w-question').innerText = currentQ.cn;
+            document.getElementById('manual-eval').classList.add('hidden');
+            clearCanvas();
+            setTimeout(() => playVoice(currentQ.cn, 'zh-TW'), 300);
+        }
+
+        async function runOCR() {
+            const status = document.getElementById('w-status');
+            const frame = document.getElementById('canvas-frame');
+            status.innerText = "⌛ AI 辨識中...";
+            const { data: { text } } = await Tesseract.recognize(canvas.toDataURL(), 'kor');
+            const result = text.replace(/\s+/g, "");
+            document.getElementById('ans-overlay').innerText = currentQ.kr;
+            document.getElementById('manual-eval').classList.remove('hidden');
+            if (result.includes(currentQ.kr)) {
+                status.innerText = "✅ 自動判定：正確！";
+                frame.classList.add('success-anim');
+                setTimeout(() => { recordScore(true); }, 1000);
+            } else {
+                status.innerText = `辨識為「${result}」(請對照評分)`;
+            }
+        }
+
+        function recordScore(isR) {
+            if(isR) scores.r++; else scores.w++;
+            document.getElementById('w-right').innerText = scores.r;
+            document.getElementById('w-wrong').innerText = scores.w;
+            nextW();
+        }
+
+        // 聽力測驗邏輯
+        function nextL() {
+            currentQ = wordBank[Math.floor(Math.random()*wordBank.length)];
+            const opts = [currentQ];
+            while(opts.length < 4) {
+                const r = wordBank[Math.floor(Math.random()*wordBank.length)];
+                if(!opts.some(o => o.kr === r.kr)) opts.push(r);
+            }
+            opts.sort(() => Math.random() - 0.5);
+            document.getElementById('listen-options').innerHTML = opts.map(o => 
+                `<button class="btn" style="background:white; color:black; border:1px solid #ddd; padding:15px;" onclick="checkL('${o.kr}', this)">${o.cn}</button>`
+            ).join('');
+            document.getElementById('listen-feedback').innerText = "";
+            setTimeout(() => playVoice(currentQ.kr, 'ko-KR'), 500);
+        }
+
+        function checkL(kr, btn) {
+            const feedback = document.getElementById('listen-feedback');
+            if(kr === currentQ.kr) {
+                btn.style.background = "var(--success)"; btn.style.color = "white";
+                feedback.innerText = "✅ 正確！";
+                setTimeout(nextL, 1000);
+            } else {
+                btn.style.background = "var(--error)"; btn.style.color = "white";
+                feedback.innerText = "❌ 錯了，再聽一次。";
+            }
+        }
+
+        // 單字庫渲染
+        function renderDict() {
+            document.getElementById('dict-list').innerHTML = wordBank.map(w => `
+                <div class="dict-item">
+                    <b style="color:var(--primary)">${w.kr}</b><br><small>${w.cn}</small>
+                    <button class="btn btn-voice btn-small" style="width:100%; margin-top:5px;" onclick="playVoice('${w.kr}', 'ko-KR')">🔊</button>
+                </div>
+            `).join('');
+        }
+
+        window.onload = renderDict;
+    </script>
+</body>
+</html>
